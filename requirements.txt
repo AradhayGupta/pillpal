@@ -1,4 +1,6 @@
 # Raspberry Pi camera app dependencies
 numpy
-opencv-python
+openEXR
+opencv-python-headless
+python3-openexr
 picamera2
