@@ -1,0 +1,4 @@
+# Raspberry Pi camera app dependencies
+numpy
+opencv-python
+picamera2

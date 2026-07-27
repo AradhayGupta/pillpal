@@ -15,3 +15,4 @@ while True:
     cv2.circle(frame, middle, 10, (255, 0 , 255), -1)
     cv2.imshow('f', frame)
     cv2.waitKey(1)
+    # this is a test
