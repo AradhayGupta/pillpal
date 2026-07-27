@@ -2,5 +2,4 @@
 numpy
 openEXR
 opencv-python-headless
-python3-openexr
 picamera2
