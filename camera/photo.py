@@ -31,6 +31,16 @@ def load_face_cascade():
     if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
         candidates.append(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))
 
+    cv2_module_path = getattr(cv2, "__file__", "")
+    if cv2_module_path:
+        module_dir = os.path.dirname(cv2_module_path)
+        candidates.extend(
+            [
+                os.path.join(module_dir, "data", "haarcascade_frontalface_default.xml"),
+                os.path.join(module_dir, "haarcascade_frontalface_default.xml"),
+            ]
+        )
+
     candidates.extend(
         [
             "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
@@ -39,8 +49,13 @@ def load_face_cascade():
         ]
     )
 
+    if os.environ.get("VIRTUAL_ENV"):
+        candidates.append(os.path.join(os.environ["VIRTUAL_ENV"], "share", "opencv4", "haarcascades", "haarcascade_frontalface_default.xml"))
+
+    seen = set()
     for path in candidates:
-        if path and os.path.exists(path):
+        if path and path not in seen and os.path.exists(path):
+            seen.add(path)
             cascade = cv2.CascadeClassifier(path)
             if not cascade.empty():
                 return cascade
