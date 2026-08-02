@@ -25,6 +25,31 @@ def open_camera():
     )
 
 
+def load_face_cascade():
+    candidates = []
+
+    if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+        candidates.append(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))
+
+    candidates.extend(
+        [
+            "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+            "/usr/local/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+            "/usr/share/opencv/haarcascades/haarcascade_frontalface_default.xml",
+        ]
+    )
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            cascade = cv2.CascadeClassifier(path)
+            if not cascade.empty():
+                return cascade
+
+    raise RuntimeError(
+        "Face cascade could not be loaded. Install OpenCV with haarcascades data or check the package installation."
+    )
+
+
 def main():
     cam, source = open_camera()
     width, height = 640, 480
@@ -32,9 +57,7 @@ def main():
     save_dir = os.path.join(os.path.dirname(__file__), "captures")
     os.makedirs(save_dir, exist_ok=True)
 
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    if face_cascade.empty():
-        raise RuntimeError("Face cascade could not be loaded. Check that OpenCV's haarcascades data is installed.")
+    face_cascade = load_face_cascade()
 
     last_save_time = 0.0
     save_interval_seconds = 2.0
