@@ -65,10 +65,78 @@ def load_face_cascade():
     )
 
 
+def load_profile_cascade():
+    """Same search strategy as load_face_cascade, but for the side-profile model."""
+    candidates = []
+
+    if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+        candidates.append(os.path.join(cv2.data.haarcascades, "haarcascade_profileface.xml"))
+
+    cv2_module_path = getattr(cv2, "__file__", "")
+    if cv2_module_path:
+        module_dir = os.path.dirname(cv2_module_path)
+        candidates.extend(
+            [
+                os.path.join(module_dir, "data", "haarcascade_profileface.xml"),
+                os.path.join(module_dir, "haarcascade_profileface.xml"),
+            ]
+        )
+
+    candidates.extend(
+        [
+            "/usr/share/opencv4/haarcascades/haarcascade_profileface.xml",
+            "/usr/local/share/opencv4/haarcascades/haarcascade_profileface.xml",
+            "/usr/share/opencv/haarcascades/haarcascade_profileface.xml",
+        ]
+    )
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            cascade = cv2.CascadeClassifier(path)
+            if not cascade.empty():
+                return cascade
+
+    return None  # profile detection is a bonus, not required
+
+
+def load_eye_cascade():
+    """Same search strategy as load_face_cascade, but for the eye model."""
+    candidates = []
+
+    if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+        candidates.append(os.path.join(cv2.data.haarcascades, "haarcascade_eye.xml"))
+
+    cv2_module_path = getattr(cv2, "__file__", "")
+    if cv2_module_path:
+        module_dir = os.path.dirname(cv2_module_path)
+        candidates.extend(
+            [
+                os.path.join(module_dir, "data", "haarcascade_eye.xml"),
+                os.path.join(module_dir, "haarcascade_eye.xml"),
+            ]
+        )
+
+    candidates.extend(
+        [
+            "/usr/share/opencv4/haarcascades/haarcascade_eye.xml",
+            "/usr/local/share/opencv4/haarcascades/haarcascade_eye.xml",
+            "/usr/share/opencv/haarcascades/haarcascade_eye.xml",
+        ]
+    )
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            cascade = cv2.CascadeClassifier(path)
+            if not cascade.empty():
+                return cascade
+
+    return None  # eye confirmation is a bonus, not required
+
+
 def is_face_like(w, h):
-    """Reject boxes that are too far from a roughly-square face aspect ratio."""
+    """Reject boxes that are wildly off from a face aspect ratio (very loose)."""
     aspect = w / float(h)
-    return 0.75 <= aspect <= 1.35
+    return 0.55 <= aspect <= 1.8
 
 
 def main():
@@ -79,6 +147,8 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     face_cascade = load_face_cascade()
+    profile_cascade = load_profile_cascade()  # may be None if not found on this system
+    eye_cascade = load_eye_cascade()          # may be None if not found on this system
 
     last_save_time = 0.0
     save_interval_seconds = 2.0
@@ -90,9 +160,17 @@ def main():
     last_box = None             # reused between detection frames
 
     # --- Accuracy settings ---
-    min_neighbors = 9           # higher = fewer false positives, more misses
-    min_size_px = 60            # in downscaled-frame pixels
-    consecutive_hits_required = 2  # require the box to show up N detection passes in a row
+    # Two-tier strategy instead of one global minNeighbors value:
+    #   - STRICT pass: high minNeighbors, trusted immediately (very unlikely
+    #     to be a curtain, but also unlikely to catch angled/turned faces)
+    #   - LOOSE pass: low minNeighbors, catches angled/marginal faces, but a
+    #     candidate from this pass is only accepted if an eye is also found
+    #     inside the box. Curtains/blinds essentially never have eye-like
+    #     features, so this lets us loosen recall without losing precision.
+    strict_min_neighbors = 9
+    loose_min_neighbors = 4
+    min_size_px = 50            # in downscaled-frame pixels
+    consecutive_hits_required = 1
     hit_streak = 0
 
     try:
@@ -107,12 +185,65 @@ def main():
                 small = cv2.resize(frame, None, fx=detect_scale, fy=detect_scale)
                 gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-                faces = face_cascade.detectMultiScale(
+                # STRICT pass: high confidence, trusted outright
+                strict_faces = list(
+                    face_cascade.detectMultiScale(
+                        gray,
+                        scaleFactor=1.1,
+                        minNeighbors=strict_min_neighbors,
+                        minSize=(min_size_px, min_size_px),
+                    )
+                )
+
+                # LOOSE pass: catches angled/marginal faces, but needs an
+                # eye found inside the box before we trust it.
+                loose_candidates = face_cascade.detectMultiScale(
                     gray,
                     scaleFactor=1.1,
-                    minNeighbors=min_neighbors,
+                    minNeighbors=loose_min_neighbors,
                     minSize=(min_size_px, min_size_px),
                 )
+
+                confirmed_loose = []
+                for (fx, fy, fw, fh) in loose_candidates:
+                    # skip if this candidate is basically already in strict_faces
+                    if any(abs(fx - sx) < 10 and abs(fy - sy) < 10 for sx, sy, sw, sh in strict_faces):
+                        continue
+                    if eye_cascade is not None:
+                        roi = gray[fy:fy + fh, fx:fx + fw]
+                        eyes = eye_cascade.detectMultiScale(
+                            roi, scaleFactor=1.1, minNeighbors=5, minSize=(12, 12)
+                        )
+                        if len(eyes) >= 1:
+                            confirmed_loose.append((fx, fy, fw, fh))
+                    # if no eye cascade available, loose candidates are dropped
+                    # (falls back to strict-only behavior)
+
+                faces = strict_faces + confirmed_loose
+
+                # Profile faces (turned heads) skip the eye check since a
+                # side profile often only shows one eye or none clearly;
+                # the profile cascade's own minNeighbors is the filter here.
+                if profile_cascade is not None:
+                    profile_min_neighbors = 7  # moderate: profile cascade is naturally more selective
+                    faces.extend(
+                        profile_cascade.detectMultiScale(
+                            gray,
+                            scaleFactor=1.1,
+                            minNeighbors=profile_min_neighbors,
+                            minSize=(min_size_px, min_size_px),
+                        )
+                    )
+                    flipped = cv2.flip(gray, 1)
+                    flipped_faces = profile_cascade.detectMultiScale(
+                        flipped,
+                        scaleFactor=1.1,
+                        minNeighbors=profile_min_neighbors,
+                        minSize=(min_size_px, min_size_px),
+                    )
+                    img_w = gray.shape[1]
+                    for (fx, fy, fw, fh) in flipped_faces:
+                        faces.append((img_w - fx - fw, fy, fw, fh))
 
                 # Filter out non-face-shaped detections (curtains, blinds, etc.)
                 faces = [f for f in faces if is_face_like(f[2], f[3])]
