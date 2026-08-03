@@ -65,6 +65,12 @@ def load_face_cascade():
     )
 
 
+def is_face_like(w, h):
+    """Reject boxes that are too far from a roughly-square face aspect ratio."""
+    aspect = w / float(h)
+    return 0.75 <= aspect <= 1.35
+
+
 def main():
     cam = open_camera()
     width, height = 640, 480
@@ -77,22 +83,59 @@ def main():
     last_save_time = 0.0
     save_interval_seconds = 2.0
 
+    # --- Speed settings ---
+    detect_every_n_frames = 2   # run detection on every Nth frame
+    detect_scale = 0.5          # run detection on a downscaled copy (0.5 = half size)
+    frame_count = 0
+    last_box = None             # reused between detection frames
+
+    # --- Accuracy settings ---
+    min_neighbors = 9           # higher = fewer false positives, more misses
+    min_size_px = 60            # in downscaled-frame pixels
+    consecutive_hits_required = 2  # require the box to show up N detection passes in a row
+    hit_streak = 0
+
     try:
         while True:
             frame = cam.capture_array()
             frame = cv2.resize(frame, (width, height))
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.equalizeHist(gray)
 
-            faces = face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30),
-            )
+            frame_count += 1
+            run_detection = (frame_count % detect_every_n_frames == 0)
 
-            if len(faces) > 0:
-                x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
+            if run_detection:
+                small = cv2.resize(frame, None, fx=detect_scale, fy=detect_scale)
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+                faces = face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=min_neighbors,
+                    minSize=(min_size_px, min_size_px),
+                )
+
+                # Filter out non-face-shaped detections (curtains, blinds, etc.)
+                faces = [f for f in faces if is_face_like(f[2], f[3])]
+
+                if len(faces) > 0:
+                    x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
+                    # scale coordinates back up to full frame size
+                    scale_back = 1.0 / detect_scale
+                    last_box = (
+                        int(x * scale_back),
+                        int(y * scale_back),
+                        int(w * scale_back),
+                        int(h * scale_back),
+                    )
+                    hit_streak += 1
+                else:
+                    hit_streak = 0
+                    last_box = None
+
+            face_confirmed = last_box is not None and hit_streak >= consecutive_hits_required
+
+            if face_confirmed:
+                x, y, w, h = last_box
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 cv2.putText(frame, "Face detected", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
