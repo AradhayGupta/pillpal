@@ -3,11 +3,28 @@ import time
 from datetime import datetime
 
 import cv2
+from gpiozero import Servo
 
 try:
     from picamera2 import Picamera2
 except Exception:
     Picamera2 = None
+
+
+# --- Servo setup ---
+SERVO_PIN = 18  # GPIO18 / physical pin 12
+servo = Servo(SERVO_PIN, min_pulse_width=0.0005, max_pulse_width=0.0025)
+IDLE_ANGLE = 0
+ACTIVE_ANGLE = 90
+
+
+def angle_to_value(angle_degrees):
+    """gpiozero Servo uses -1 (min) to 1 (max) instead of degrees directly."""
+    return (angle_degrees / 90.0) - 1
+
+
+def set_servo_active(active: bool):
+    servo.value = angle_to_value(ACTIVE_ANGLE if active else IDLE_ANGLE)
 
 
 def open_camera():
@@ -160,18 +177,17 @@ def main():
     last_box = None             # reused between detection frames
 
     # --- Accuracy settings ---
-    # Two-tier strategy instead of one global minNeighbors value:
-    #   - STRICT pass: high minNeighbors, trusted immediately (very unlikely
-    #     to be a curtain, but also unlikely to catch angled/turned faces)
-    #   - LOOSE pass: low minNeighbors, catches angled/marginal faces, but a
-    #     candidate from this pass is only accepted if an eye is also found
-    #     inside the box. Curtains/blinds essentially never have eye-like
-    #     features, so this lets us loosen recall without losing precision.
     strict_min_neighbors = 9
     loose_min_neighbors = 4
     min_size_px = 50            # in downscaled-frame pixels
     consecutive_hits_required = 1
     hit_streak = 0
+
+    # --- Servo debounce ---
+    NO_FACE_GRACE_SECONDS = 1.5
+    last_face_seen_time = 0.0
+    servo_is_active = False
+    set_servo_active(False)  # start idle
 
     try:
         while True:
@@ -185,7 +201,6 @@ def main():
                 small = cv2.resize(frame, None, fx=detect_scale, fy=detect_scale)
                 gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-                # STRICT pass: high confidence, trusted outright
                 strict_faces = list(
                     face_cascade.detectMultiScale(
                         gray,
@@ -195,8 +210,6 @@ def main():
                     )
                 )
 
-                # LOOSE pass: catches angled/marginal faces, but needs an
-                # eye found inside the box before we trust it.
                 loose_candidates = face_cascade.detectMultiScale(
                     gray,
                     scaleFactor=1.1,
@@ -206,7 +219,6 @@ def main():
 
                 confirmed_loose = []
                 for (fx, fy, fw, fh) in loose_candidates:
-                    # skip if this candidate is basically already in strict_faces
                     if any(abs(fx - sx) < 10 and abs(fy - sy) < 10 for sx, sy, sw, sh in strict_faces):
                         continue
                     if eye_cascade is not None:
@@ -216,16 +228,11 @@ def main():
                         )
                         if len(eyes) >= 1:
                             confirmed_loose.append((fx, fy, fw, fh))
-                    # if no eye cascade available, loose candidates are dropped
-                    # (falls back to strict-only behavior)
 
                 faces = strict_faces + confirmed_loose
 
-                # Profile faces (turned heads) skip the eye check since a
-                # side profile often only shows one eye or none clearly;
-                # the profile cascade's own minNeighbors is the filter here.
                 if profile_cascade is not None:
-                    profile_min_neighbors = 7  # moderate: profile cascade is naturally more selective
+                    profile_min_neighbors = 7
                     faces.extend(
                         profile_cascade.detectMultiScale(
                             gray,
@@ -245,12 +252,10 @@ def main():
                     for (fx, fy, fw, fh) in flipped_faces:
                         faces.append((img_w - fx - fw, fy, fw, fh))
 
-                # Filter out non-face-shaped detections (curtains, blinds, etc.)
                 faces = [f for f in faces if is_face_like(f[2], f[3])]
 
                 if len(faces) > 0:
                     x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
-                    # scale coordinates back up to full frame size
                     scale_back = 1.0 / detect_scale
                     last_box = (
                         int(x * scale_back),
@@ -283,6 +288,18 @@ def main():
             else:
                 cv2.putText(frame, "No face detected", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
+            # --- Servo control with debounce ---
+            now = time.time()
+            if face_confirmed:
+                last_face_seen_time = now
+
+            should_be_active = (now - last_face_seen_time) < NO_FACE_GRACE_SECONDS
+
+            if should_be_active != servo_is_active:
+                set_servo_active(should_be_active)
+                servo_is_active = should_be_active
+                print("Servo ACTIVE" if should_be_active else "Servo IDLE")
+
             cv2.circle(frame, middle, 10, (255, 0, 255), -1)
             cv2.putText(frame, "Press q to quit", (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             cv2.imshow("Camera", frame)
@@ -292,6 +309,8 @@ def main():
     except KeyboardInterrupt:
         print("Camera stream stopped.")
     finally:
+        set_servo_active(False)
+        servo.detach()
         cam.stop()
         cv2.destroyAllWindows()
 
