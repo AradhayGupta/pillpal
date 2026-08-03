@@ -3,3 +3,6 @@
 numpy<2
 opencv-python>=4.9.0,<5
 picamera2>=0.3.24
+# Optional: only needed if you later use plotting or dataframes in this project
+# seaborn and matplotlib are intentionally omitted here because they pull in
+# newer dependency requirements that may not work on older Raspberry Pi Python installs.

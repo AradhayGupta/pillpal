@@ -3,7 +3,11 @@ import time
 from datetime import datetime
 
 import cv2
-from picamera2 import Picamera2
+
+try:
+    from picamera2 import Picamera2
+except Exception:
+    Picamera2 = None
 
 
 def open_camera():
@@ -12,16 +16,12 @@ def open_camera():
             cam = Picamera2()
             cam.configure(cam.create_video_configuration(main={"format": "XRGB8888", "size": (640, 480)}))
             cam.start()
-            return cam, "picamera2"
+            return cam
         except Exception as exc:
-            print(f"Picamera2 initialization failed: {exc}")
-
-    cap = cv2.VideoCapture(0)
-    if cap.isOpened():
-        return cap, "webcam"
+            raise RuntimeError(f"Picamera2 initialization failed: {exc}") from exc
 
     raise RuntimeError(
-        "No supported camera device is available. On Raspberry Pi, ensure picamera2 is installed and the camera is enabled."
+        "Picamera2 is not available. On Raspberry Pi, ensure picamera2 is installed and the camera is enabled."
     )
 
 
@@ -66,7 +66,7 @@ def load_face_cascade():
 
 
 def main():
-    cam, source = open_camera()
+    cam = open_camera()
     width, height = 640, 480
     middle = (width // 2, height // 2)
     save_dir = os.path.join(os.path.dirname(__file__), "captures")
@@ -79,13 +79,7 @@ def main():
 
     try:
         while True:
-            if source == "picamera2":
-                frame = cam.capture_array()
-            else:
-                ok, frame = cam.read()
-                if not ok:
-                    raise RuntimeError("Failed to read a frame from the camera.")
-
+            frame = cam.capture_array()
             frame = cv2.resize(frame, (width, height))
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.equalizeHist(gray)
@@ -124,10 +118,7 @@ def main():
     except KeyboardInterrupt:
         print("Camera stream stopped.")
     finally:
-        if source == "picamera2":
-            cam.stop()
-        else:
-            cam.release()
+        cam.stop()
         cv2.destroyAllWindows()
 
 
