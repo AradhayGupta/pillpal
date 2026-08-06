@@ -24,7 +24,7 @@ def angle_to_value(angle_degrees):
     return (angle_degrees / 90.0) - 1
 
 
-def set_angle(servo_obj, angle_degrees, pause_seconds=0.2):
+def set_angle(servo_obj, angle_degrees, pause_seconds=10):
     if not 0 <= angle_degrees <= 180:
         raise ValueError("angle must be between 0 and 180")
 
@@ -33,12 +33,14 @@ def set_angle(servo_obj, angle_degrees, pause_seconds=0.2):
     time.sleep(pause_seconds)
 
 
-def run_test(angles=(0, 90, 180), pause_seconds=0.5):
+def run_test(angles=(0, 45, 90, 145, 180), pause_seconds=10, loops=2):
     servo = Servo(SERVO_PIN, min_pulse_width=MIN_PULSE_WIDTH, max_pulse_width=MAX_PULSE_WIDTH)
 
     try:
-        for angle in angles:
-            set_angle(servo, angle, pause_seconds=pause_seconds)
+        for i in range(loops):
+            print(f"Starting loop {i+1}/{loops}")
+            for angle in angles:
+                set_angle(servo, angle, pause_seconds=pause_seconds)
     except KeyboardInterrupt:
         print("\nStopping servo test")
     finally:
