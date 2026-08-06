@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Servo motion test for a Raspberry Pi.
+
+This script sweeps a servo between a few angles so you can observe
+its movement speed and check whether it can move a flap.
+"""
+
+import time
+
+try:
+    import RPi.GPIO as GPIO
+except ImportError:
+    class _FakePWM:
+        def __init__(self, pin, freq_hz):
+            self.pin = pin
+            self.freq_hz = freq_hz
+            self.duty = 0.0
+
+        def start(self, duty):
+            self.duty = duty
+            print(f"[sim] PWM started on pin {self.pin} at {self.freq_hz} Hz")
+
+        def ChangeDutyCycle(self, duty):
+            self.duty = duty
+            print(f"[sim] duty cycle = {duty:.2f}%")
+
+        def stop(self):
+            print("[sim] PWM stopped")
+
+    class _FakeGPIO:
+        BCM = "BCM"
+        OUT = "OUT"
+
+        @staticmethod
+        def setwarnings(_):
+            return None
+
+        @staticmethod
+        def setmode(mode):
+            print(f"[sim] setmode({mode})")
+
+        @staticmethod
+        def setup(pin, mode):
+            print(f"[sim] setup pin {pin} as {mode}")
+
+        @staticmethod
+        def cleanup():
+            print("[sim] cleanup")
+
+        @staticmethod
+        def PWM(pin, freq_hz):
+            return _FakePWM(pin, freq_hz)
+
+    GPIO = _FakeGPIO()
+    SIMULATED = True
+else:
+    SIMULATED = False
+
+
+PWM_PIN = 18
+FREQ_HZ = 50
+MIN_PULSE_MS = 0.5
+MAX_PULSE_MS = 2.5
+
+
+def set_angle(angle, pwm_obj, step_delay=0.02):
+    """Move the servo to an angle between 0 and 180 degrees."""
+    if not 0 <= angle <= 180:
+        raise ValueError("angle must be between 0 and 180")
+
+    pulse_width_ms = MIN_PULSE_MS + (angle / 180.0) * (MAX_PULSE_MS - MIN_PULSE_MS)
+    duty_cycle = pulse_width_ms / 1000.0 * 100.0
+    pwm_obj.ChangeDutyCycle(duty_cycle)
+    time.sleep(step_delay)
+
+
+def run_test(angles=(0, 90, 180), pause_seconds=0.5, step_delay=0.02):
+    GPIO.setwarnings(False)
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(PWM_PIN, GPIO.OUT)
+
+    pwm = GPIO.PWM(PWM_PIN, FREQ_HZ)
+    pwm.start(0)
+
+    try:
+        for angle in angles:
+            print(f"Moving to {angle}°")
+            set_angle(angle, pwm, step_delay=step_delay)
+            time.sleep(pause_seconds)
+    except KeyboardInterrupt:
+        print("\nStopping servo test")
+    finally:
+        pwm.stop()
+        GPIO.cleanup()
+
+
+if __name__ == "__main__":
+    if SIMULATED:
+        print("RPi.GPIO not found. Running in simulation mode.")
+    run_test()

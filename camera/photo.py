@@ -11,11 +11,16 @@ except Exception:
     Picamera2 = None
 
 
-# --- Servo setup ---
+# --- Servo / trapdoor setup ---
 SERVO_PIN = 18  # GPIO18 / physical pin 12
 servo = Servo(SERVO_PIN, min_pulse_width=0.0005, max_pulse_width=0.0025)
-IDLE_ANGLE = 0
-ACTIVE_ANGLE = 90
+
+# Default swing: 0 degrees = flap closed (covering the hole),
+# 90 degrees = flap open (clear of the hole). If the flap doesn't
+# fully close or fully clear at these angles once mounted, run
+# calibrate_trapdoor.py to find the right numbers and update these.
+CLOSED_ANGLE = 0
+OPEN_ANGLE = 90
 
 
 def angle_to_value(angle_degrees):
@@ -23,8 +28,8 @@ def angle_to_value(angle_degrees):
     return (angle_degrees / 90.0) - 1
 
 
-def set_servo_active(active: bool):
-    servo.value = angle_to_value(ACTIVE_ANGLE if active else IDLE_ANGLE)
+def set_trapdoor_open(open_: bool):
+    servo.value = angle_to_value(OPEN_ANGLE if open_ else CLOSED_ANGLE)
 
 
 def open_camera():
@@ -186,8 +191,8 @@ def main():
     # --- Servo debounce ---
     NO_FACE_GRACE_SECONDS = 1.5
     last_face_seen_time = 0.0
-    servo_is_active = False
-    set_servo_active(False)  # start idle
+    trapdoor_is_open = False
+    set_trapdoor_open(False)  # start closed
 
     try:
         while True:
@@ -295,10 +300,10 @@ def main():
 
             should_be_active = (now - last_face_seen_time) < NO_FACE_GRACE_SECONDS
 
-            if should_be_active != servo_is_active:
-                set_servo_active(should_be_active)
-                servo_is_active = should_be_active
-                print("Servo ACTIVE" if should_be_active else "Servo IDLE")
+            if should_be_active != trapdoor_is_open:
+                set_trapdoor_open(should_be_active)
+                trapdoor_is_open = should_be_active
+                print("Trapdoor OPEN" if should_be_active else "Trapdoor CLOSED")
 
             cv2.circle(frame, middle, 10, (255, 0, 255), -1)
             cv2.putText(frame, "Press q to quit", (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
@@ -309,7 +314,7 @@ def main():
     except KeyboardInterrupt:
         print("Camera stream stopped.")
     finally:
-        set_servo_active(False)
+        set_trapdoor_open(False)
         servo.detach()
         cam.stop()
         cv2.destroyAllWindows()
