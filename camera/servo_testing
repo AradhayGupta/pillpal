@@ -33,17 +33,38 @@ def set_angle(servo_obj, angle_degrees, pause_seconds=2):
     time.sleep(pause_seconds)
 
 
-def run_test(angles=(0, 90, 180), pause_seconds=2, short_pause_before_180=0.5):
+def run_test(angles=(0, 90, 180), pause_seconds=2, short_pause_before_180=0.5, duration_seconds=30):
+    """Move through `angles` repeatedly for `duration_seconds` seconds.
+
+    If `duration_seconds` is None the sequence runs once.
+    """
     servo = Servo(SERVO_PIN, min_pulse_width=MIN_PULSE_WIDTH, max_pulse_width=MAX_PULSE_WIDTH)
 
+    start = time.time()
     try:
-        for idx, angle in enumerate(angles):
-            # If the next target is 180, reduce the pause after this move
-            if idx + 1 < len(angles) and angles[idx + 1] == 180:
-                this_pause = short_pause_before_180
-            else:
-                this_pause = pause_seconds
-            set_angle(servo, angle, pause_seconds=this_pause)
+        # If duration_seconds is None, run a single pass; otherwise loop until time is up
+        if duration_seconds is None:
+            sequences = 1
+        else:
+            sequences = None
+
+        while True:
+            for idx, angle in enumerate(angles):
+                # If the next target is 180, reduce the pause after this move
+                if idx + 1 < len(angles) and angles[idx + 1] == 180:
+                    this_pause = short_pause_before_180
+                else:
+                    this_pause = pause_seconds
+
+                set_angle(servo, angle, pause_seconds=this_pause)
+
+                if duration_seconds is not None and (time.time() - start) >= duration_seconds:
+                    return
+
+            # If duration_seconds is None, only run the sequence once
+            if sequences == 1:
+                break
+
     except KeyboardInterrupt:
         print("\nStopping servo test")
     finally:
